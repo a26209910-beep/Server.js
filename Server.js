@@ -32,6 +32,7 @@ const PHRASES = [
 ];
 
 const rooms = new Map();
+let played = 0; // сколько партий закончено с момента запуска сервера
 
 setInterval(() => {
   const t = Date.now();
@@ -108,11 +109,21 @@ http.createServer((req, res) => {
           me.time = now - v.startAt;
           v.winner = you;
           v.status = "finished";
+          played++;
         } else if (now - v.startAt > MAX_RACE) {
           v.status = "finished";
         }
       }
       return send(res, view(v, now));
+    }
+
+    case "/stats": {
+      let playing = 0, waiting = 0;
+      for (const r of rooms.values()) {
+        if (r.status === "finished" || now - r.touched > 15000) continue; // нет активности 15 с — не считаем
+        if (r.status === "running") playing += 2; else waiting += 1;
+      }
+      return send(res, { playing, waiting, played });
     }
 
     case "/leave": {
