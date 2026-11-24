@@ -6,6 +6,7 @@ const http = require("http");
 const TTL = 15 * 60 * 1000;   // комната живёт 15 минут без действий
 const START_DELAY = 5000;     // отсчёт после входа второго игрока
 const MAX_RACE = 120 * 1000;  // гонка длится не дольше 2 минут
+const PHOTO_WINDOW = 1000;    // после победителя ждём финиш второго игрока до 1 с (для «фото-финиша»)
 const MAX_CPS = 25;           // античит: не больше 25 знаков в секунду
 
 const PHRASES = [
@@ -156,7 +157,8 @@ function view(v, now) {
     winner: v.winner,          // "a" | "b" | "" | "x"
     left: v.left || "",
     players: { a: pub(v.a), b: pub(v.b) },
-    elo: v.elo || null,        // изменение рейтинга после партии
+    elo: v.elo || null,
+    photo: v.winTime ? { open: !!v.photoUntil && now <= v.photoUntil && !v.loserTime, gap: v.loserTime ? v.loserTime - v.winTime : null } : null,        // изменение рейтинга после партии
   };
 }
 
@@ -680,9 +682,19 @@ http.createServer((req, res) => {
           v.status = "finished";
           played++;
           applyElo(v, you, now);
+          // фото-финиш: если соперник почти у цели, даём ему секунду дописать, чтобы узнать разницу
+          const rival = v[you === "a" ? "b" : "a"];
+          v.winTime = me.time;
+          v.photoUntil = rival && len - rival.pos <= 8 ? now + PHOTO_WINDOW : 0;
         } else if (now - v.startAt > MAX_RACE) {
           v.status = "finished";
         }
+      }
+      else if (me && v.status === "finished" && v.winner && you !== v.winner && v.photoUntil && !v.loserTime && now <= v.photoUntil && now >= v.startAt) {
+        // проигравший успел финишировать в окне фото-финиша: записываем его время
+        const len = v.text.length, cap = Math.floor((now - v.startAt) / 1000 * MAX_CPS) + 6;
+        me.pos = Math.max(me.pos, Math.min(Math.max(0, pos), cap, len));
+        if (me.pos >= len) { me.time = now - v.startAt; v.loserTime = me.time; }
       }
       return send(res, view(v, now));
     }
