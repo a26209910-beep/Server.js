@@ -7,6 +7,7 @@ const TTL = 15 * 60 * 1000;   // комната живёт 15 минут без 
 const START_DELAY = 5000;     // отсчёт после входа второго игрока
 const MAX_RACE = 120 * 1000;  // гонка длится не дольше 2 минут
 const PHOTO_WINDOW = 1000;    // после победителя ждём финиш второго игрока до 1 с (для «фото-финиша»)
+const photoHall = [];          // зал фото-финишей: близкие финиши (хранится в памяти, обнуляется при перезапуске)
 const MAX_CPS = 25;           // античит: не больше 25 знаков в секунду
 
 const PHRASES = [
@@ -694,7 +695,14 @@ http.createServer((req, res) => {
         // проигравший успел финишировать в окне фото-финиша: записываем его время
         const len = v.text.length, cap = Math.floor((now - v.startAt) / 1000 * MAX_CPS) + 6;
         me.pos = Math.max(me.pos, Math.min(Math.max(0, pos), cap, len));
-        if (me.pos >= len) { me.time = now - v.startAt; v.loserTime = me.time; }
+        if (me.pos >= len) {
+          me.time = now - v.startAt; v.loserTime = me.time;
+          const gap = v.loserTime - v.winTime, wp = v[v.winner];
+          if (gap >= 0 && gap < 300 && wp) { // настоящий фото-финиш: записываем в зал
+            photoHall.push({ w: wp.name, wu: wp.uid, l: me.name, lu: me.uid, gap, ts: now });
+            if (photoHall.length > 300) photoHall.shift();
+          }
+        }
       }
       return send(res, view(v, now));
     }
@@ -721,6 +729,15 @@ http.createServer((req, res) => {
         rank: idx >= 0 ? idx + 1 : 0, total: all.length,
         me: mine ? { r: mine.r, g: mine.g, w: mine.w, l: mine.l } : null,
       });
+    }
+
+    case "/hall": {
+      const cutoff = now - 7 * 24 * 3600 * 1000; // «неделя» = последние 7 суток
+      while (photoHall.length && photoHall[0].ts < cutoff) photoHall.shift();
+      const list = photoHall.slice().sort((a, b) => a.gap - b.gap).slice(0, 10).map((e) => ({
+        w: e.w, l: e.l, gap: e.gap, ago: Math.round((now - e.ts) / 1000), me: !!uid && (e.wu === uid || e.lu === uid),
+      }));
+      return send(res, { hall: list, week: photoHall.length });
     }
 
     case "/stats": {
